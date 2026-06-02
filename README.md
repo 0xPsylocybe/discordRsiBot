@@ -1,6 +1,6 @@
 # Discord RSI Verification Bot
 
-A Discord bot that verifies [Roberts Space Industries (RSI)](https://robertsspaceindustries.com) accounts by confirming ownership through a unique cryptographic token that the user temporarily places in their public bio.
+A Discord bot that verifies [Roberts Space Industries (RSI)](https://robertsspaceindustries.com) accounts by confirming ownership through a unique cryptographic token that the user temporarily places in their public bio. Verified users are stored in a local SQLite database, enabling additional features such as the `/hangar` command.
 
 ## How It Works
 
@@ -9,17 +9,18 @@ A Discord bot that verifies [Roberts Space Industries (RSI)](https://robertsspac
 3. The user pastes the token into their RSI profile bio (Short Bio / Description).
 4. The user clicks the **Confirm Verification** button in Discord.
 5. The bot fetches the RSI profile, confirms the token is in the bio, and checks the account's age.
-6. If valid, the bot assigns the configured role and syncs the user's Discord nickname with their RSI handle.
+6. If valid, the bot assigns the configured role, syncs the user's Discord nickname with their RSI handle, and **saves the RSI handle to the local database** for future use.
 
 ## Requirements
 
 - Python 3.10+
 - A Discord bot token from the [Discord Developer Portal](https://discord.com/developers/applications)
-- The following Python packages:
+- The following Python packages (all listed in `requirements.txt`):
   - `discord.py`
   - `aiohttp`
   - `beautifulsoup4`
   - `python-dotenv`
+  - `aiosqlite`
 
 ## Setup
 
@@ -33,7 +34,7 @@ cd discordRsiVerificationBot
 ### 2. Install dependencies
 
 ```bash
-pip install discord.py aiohttp beautifulsoup4 python-dotenv
+pip install -r requirements.txt
 ```
 
 ### 3. Configure the bot
@@ -53,6 +54,7 @@ Open `botVerify.py` and edit the **⚙️ CONFIGURATION** section at the top:
 | `TOKEN_PREFIX` | `"VERIFY"` | Prefix for the generated verification token |
 | `CACHE_TTL_SECONDS` | `600` | Seconds before a pending verification expires |
 | `BOT_COMMAND_PREFIX` | `"!"` | Prefix for text commands (e.g. `!setup_verify`) |
+| `DB_PATH` | `"verified_users.db"` | Path to the local SQLite database file (gitignored) |
 
 ### 4. Create the `.env` file
 
@@ -62,7 +64,7 @@ Create a file named `.env` in the project root:
 DISCORD_TOKEN=your_bot_token_here
 ```
 
-> ⚠️ **Never commit your `.env` file or your real bot token.** The `.gitignore` already excludes both.
+> ⚠️ **Never commit your `.env` file or your real bot token.** The `.gitignore` already excludes both. The SQLite database file (`*.db`) is also gitignored.
 
 ### 5. Configure Discord permissions
 
@@ -82,6 +84,8 @@ In the [Discord Developer Portal](https://discord.com/developers/applications):
 python botVerify.py
 ```
 
+The bot will automatically create the `verified_users.db` database file on first startup.
+
 ### 7. Post the verification panel
 
 In your Discord server, go to the verification channel and run:
@@ -97,11 +101,24 @@ In your Discord server, go to the verification channel and run:
 | Command | Type | Description |
 |---|---|---|
 | `/verify [rsi_handle]` | Slash | Start the RSI verification flow |
+| `/hangar` | Slash | Display your public ship hangar from [FleetYards.net](https://fleetyards.net) |
 | `!setup_verify` | Prefix | Post the verification panel (admin only) |
+
+## Hangar Command
+
+The `/hangar` command fetches and displays the authenticated user's public ship hangar from [FleetYards.net](https://fleetyards.net).
+
+**Requirements:**
+- The user must have completed the `/verify` flow first. Their RSI handle is stored in the local database at that point.
+- The user must have a [FleetYards.net](https://fleetyards.net) account using the **same username as their RSI handle** (standard community practice).
+- The hangar must be set to **Public** in FleetYards settings (Profile → Settings → Public Hangar).
+
+> **Note:** RSI's own hangar is not publicly accessible without login, so this command uses FleetYards.net as the data source.
 
 ## Important Notes
 
 - The bot's role in the server **must be positioned above** the verified role in the role hierarchy (Server Settings → Roles), otherwise it won't be able to assign it.
 - The user's RSI profile **must be set to Public** for the bio scraping and date extraction to work.
 - The verification token expires after `CACHE_TTL_SECONDS` (default: 10 minutes). The user must complete the process before it expires.
-- This bot does **not** store any data permanently — the verification cache is in memory only and resets on restart.
+- Verified users are **stored persistently** in a local SQLite database (`verified_users.db`). This file is gitignored and lives only on your machine.
+- If a user re-verifies (e.g. with a different handle), their database entry is updated automatically (`INSERT OR REPLACE`).

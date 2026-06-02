@@ -1,6 +1,6 @@
 # Bot de Verificación de RSI para Discord
 
-Un bot de Discord que verifica cuentas de [Roberts Space Industries (RSI)](https://robertsspaceindustries.com) confirmando la propiedad mediante un token criptográfico único que el usuario coloca temporalmente en su bio pública.
+Un bot de Discord que verifica cuentas de [Roberts Space Industries (RSI)](https://robertsspaceindustries.com) confirmando la propiedad mediante un token criptográfico único que el usuario coloca temporalmente en su bio pública. Los usuarios verificados se almacenan en una base de datos SQLite local, lo que habilita funciones adicionales como el comando `/hangar`.
 
 ## Cómo funciona
 
@@ -9,17 +9,18 @@ Un bot de Discord que verifica cuentas de [Roberts Space Industries (RSI)](https
 3. El usuario pega el token en la bio de su perfil de RSI (Short Bio / Description).
 4. El usuario pulsa el botón **Confirmar Verificación** en Discord.
 5. El bot obtiene el perfil de RSI, confirma que el token está en la bio y comprueba la antigüedad de la cuenta.
-6. Si todo es válido, el bot asigna el rol configurado y sincroniza el apodo de Discord del usuario con su handle de RSI.
+6. Si todo es válido, el bot asigna el rol configurado, sincroniza el apodo de Discord del usuario con su handle de RSI y **guarda el handle en la base de datos local** para uso futuro.
 
 ## Requisitos
 
 - Python 3.10+
 - Un token de bot de Discord del [Discord Developer Portal](https://discord.com/developers/applications)
-- Los siguientes paquetes de Python:
+- Los siguientes paquetes de Python (todos listados en `requirements.txt`):
   - `discord.py`
   - `aiohttp`
   - `beautifulsoup4`
   - `python-dotenv`
+  - `aiosqlite`
 
 ## Configuración
 
@@ -33,7 +34,7 @@ cd discordRsiVerificationBot
 ### 2. Instalar dependencias
 
 ```bash
-pip install discord.py aiohttp beautifulsoup4 python-dotenv
+pip install -r requirements.txt
 ```
 
 ### 3. Configurar el bot
@@ -53,6 +54,7 @@ Abre `botVerify.py` y edita la sección **⚙️ CONFIGURATION** al principio de
 | `TOKEN_PREFIX` | `"VERIFY"` | Prefijo del token de verificación generado |
 | `CACHE_TTL_SECONDS` | `600` | Segundos antes de que expire una verificación pendiente |
 | `BOT_COMMAND_PREFIX` | `"!"` | Prefijo para los comandos de texto (ej. `!setup_verify`) |
+| `DB_PATH` | `"verified_users.db"` | Ruta al archivo de base de datos SQLite local (está en el .gitignore) |
 
 ### 4. Crear el archivo `.env`
 
@@ -62,7 +64,7 @@ Crea un archivo llamado `.env` en la raíz del proyecto:
 DISCORD_TOKEN=tu_token_de_bot_aquí
 ```
 
-> ⚠️ **Nunca subas tu archivo `.env` ni tu token real a un repositorio.** El `.gitignore` ya los excluye.
+> ⚠️ **Nunca subas tu archivo `.env` ni tu token real a un repositorio.** El `.gitignore` ya los excluye. El archivo de base de datos SQLite (`*.db`) también está excluido.
 
 ### 5. Configurar los permisos de Discord
 
@@ -82,6 +84,8 @@ En el [Discord Developer Portal](https://discord.com/developers/applications):
 python botVerify.py
 ```
 
+El bot creará automáticamente el archivo de base de datos `verified_users.db` la primera vez que arranque.
+
 ### 7. Publicar el panel de verificación
 
 En tu servidor de Discord, ve al canal de verificación y ejecuta:
@@ -97,11 +101,24 @@ En tu servidor de Discord, ve al canal de verificación y ejecuta:
 | Comando | Tipo | Descripción |
 |---|---|---|
 | `/verify [rsi_handle]` | Slash | Iniciar el proceso de verificación de RSI |
+| `/hangar` | Slash | Mostrar tu hangar público de naves desde [FleetYards.net](https://fleetyards.net) |
 | `!setup_verify` | Prefijo | Publicar el panel de verificación (solo admins) |
+
+## Comando /hangar
+
+El comando `/hangar` obtiene y muestra el hangar público de naves del usuario autenticado desde [FleetYards.net](https://fleetyards.net).
+
+**Requisitos:**
+- El usuario debe haber completado el flujo `/verify` previamente. Su handle de RSI queda guardado en la base de datos local en ese momento.
+- El usuario debe tener una cuenta en [FleetYards.net](https://fleetyards.net) usando el **mismo nombre de usuario que su handle de RSI** (práctica estándar en la comunidad).
+- El hangar debe estar configurado como **Público** en los ajustes de FleetYards (Perfil → Settings → Public Hangar).
+
+> **Nota:** El hangar propio de RSI no es accesible públicamente sin iniciar sesión, por lo que este comando utiliza FleetYards.net como fuente de datos.
 
 ## Notas importantes
 
 - El rol del bot en el servidor **debe estar por encima** del rol verificado en la jerarquía de roles (Ajustes del Servidor → Roles), de lo contrario no podrá asignarlo.
 - El perfil de RSI del usuario **debe estar en modo Público** para que el bot pueda leer la bio y la fecha de alta.
 - El token de verificación expira tras `CACHE_TTL_SECONDS` (por defecto: 10 minutos). El usuario debe completar el proceso antes de que expire.
-- Este bot **no almacena ningún dato de forma permanente**: el caché de verificación es en memoria y se reinicia con el bot.
+- Los usuarios verificados se **almacenan de forma persistente** en una base de datos SQLite local (`verified_users.db`). Este archivo está en el `.gitignore` y solo existe en tu máquina.
+- Si un usuario se verifica de nuevo (p. ej. con un handle diferente), su registro en la base de datos se actualiza automáticamente (`INSERT OR REPLACE`).
