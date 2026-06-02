@@ -3,3 +3,4 @@ botVerify.py
 __pycache__/
 *.pyc
 *.pyo
+*.db

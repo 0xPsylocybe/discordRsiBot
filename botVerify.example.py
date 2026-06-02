@@ -21,6 +21,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 from datetime import datetime
 import os
+import aiosqlite
 from dotenv import load_dotenv
 
 # EN: Load environment variables from the .env file
@@ -69,6 +70,61 @@ CACHE_TTL_SECONDS = 600
 # ES: Prefijo para los comandos de texto (ej. !setup_verify).
 BOT_COMMAND_PREFIX = "!"  # ← change me / cámbiame
 
+# EN: Path to the local SQLite database file that stores verified user records.
+#     This file is gitignored — it stays only on your machine.
+# ES: Ruta al archivo de base de datos SQLite que almacena los usuarios verificados.
+#     Este archivo está en el .gitignore — solo existe en tu máquina.
+DB_PATH = "verified_users.db"
+
+
+# ==========================================
+# DATABASE HELPERS / FUNCIONES DE BASE DE DATOS
+# ==========================================
+
+async def init_db():
+    """
+    EN: Initialises the SQLite database and creates the verified_users table if it does not exist.
+        Called once at bot startup from setup_hook.
+    ES: Inicializa la base de datos SQLite y crea la tabla verified_users si no existe.
+        Se llama una vez al inicio del bot desde setup_hook.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS verified_users (
+                discord_id  INTEGER PRIMARY KEY,
+                rsi_handle  TEXT    NOT NULL,
+                verified_at TEXT    NOT NULL
+            )
+        """)
+        await db.commit()
+
+
+async def save_verified_user(discord_id: int, rsi_handle: str):
+    """
+    EN: Inserts or updates the RSI handle for a Discord user after successful verification.
+    ES: Inserta o actualiza el handle de RSI para un usuario de Discord tras la verificación exitosa.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO verified_users (discord_id, rsi_handle, verified_at) VALUES (?, ?, ?)",
+            (discord_id, rsi_handle, datetime.now().isoformat())
+        )
+        await db.commit()
+
+
+async def get_rsi_handle(discord_id: int) -> str | None:
+    """
+    EN: Returns the RSI handle linked to a Discord user ID, or None if not found.
+    ES: Devuelve el handle de RSI vinculado a un ID de Discord, o None si no se encuentra.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT rsi_handle FROM verified_users WHERE discord_id = ?",
+            (discord_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
 
 class VerificationBot(commands.Bot):
     """
@@ -88,6 +144,9 @@ class VerificationBot(commands.Bot):
         super().__init__(command_prefix=BOT_COMMAND_PREFIX, intents=intents)
 
     async def setup_hook(self):
+        # EN: Initialise the SQLite database before anything else runs
+        # ES: Inicializar la base de datos SQLite antes de que se ejecute nada más
+        await init_db()
         # EN: Register the persistent view so the button survives bot restarts
         # ES: Registrar la vista persistente para que el botón sobreviva a los reinicios del bot
         self.add_view(VerificationView())
@@ -266,6 +325,9 @@ class VerificationView(discord.ui.View):
                         f"Se te ha otorgado el rol `{VERIFIED_ROLE_NAME}`. ¡Bienvenido!",
                         ephemeral=True
                     )
+                    # EN: Persist the verified user's RSI handle in the database for future commands
+                    # ES: Guardar el handle RSI del usuario verificado en la base de datos para futuros comandos
+                    await save_verified_user(user_id, rsi_handle)
                     # EN: Remove cache entry after successful verification to free memory
                     # ES: Eliminar la entrada del caché tras la verificación exitosa para liberar memoria
                     del verification_cache[user_id]
@@ -399,6 +461,144 @@ async def verify(interaction: discord.Interaction, rsi_handle: str):
         view=VerificationView(),
         ephemeral=True
     )
+
+
+@bot.tree.command(name="hangar", description="Show your public FleetYards.net hangar. / Muestra tu hangar público en FleetYards.net.")
+async def hangar(interaction: discord.Interaction):
+    """
+    EN: Slash command (/hangar) that fetches and displays the public FleetYards hangar
+        of the verified user. Uses the RSI handle stored at verification time.
+        Assumes the FleetYards username matches the RSI handle (standard in the community).
+        Requires the user to be verified and to have a public hangar on FleetYards.
+    ES: Comando slash (/hangar) que obtiene y muestra el hangar público de FleetYards
+        del usuario verificado. Usa el handle RSI guardado en el momento de la verificación.
+        Asume que el usuario de FleetYards coincide con el handle RSI (estándar en la comunidad).
+        Requiere que el usuario esté verificado y tenga el hangar público en FleetYards.
+    """
+    # EN: Guard: this command only works inside a server
+    # ES: Guardia: este comando solo funciona dentro de un servidor
+    if not interaction.guild:
+        await interaction.response.send_message(
+            "❌ This command can only be used inside a server. / "
+            "Este comando solo puede usarse dentro de un servidor.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    user_id = interaction.user.id
+
+    # EN: Look up the RSI handle stored when this user completed verification
+    # ES: Buscar el handle RSI guardado cuando este usuario completó la verificación
+    rsi_handle = await get_rsi_handle(user_id)
+
+    if not rsi_handle:
+        await interaction.followup.send(
+            "❌ You are not verified yet. Use `/verify` first to link your RSI account. / "
+            "No estás verificado aún. Usa primero `/verify` para enlazar tu cuenta de RSI.",
+            ephemeral=True
+        )
+        return
+
+    # EN: Assume the FleetYards username matches the RSI handle (standard practice in the community)
+    # ES: Asumir que el usuario de FleetYards coincide con el handle de RSI (práctica estándar en la comunidad)
+    fleetyards_url = f"https://fleetyards.net/{rsi_handle.lower()}/hangar"
+
+    # EN: Fetch the public FleetYards hangar page
+    # ES: Obtener la página pública del hangar en FleetYards
+    async with aiohttp.ClientSession() as session:
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            async with session.get(fleetyards_url, headers=headers) as response:
+                if response.status == 404:
+                    await interaction.followup.send(
+                        f"❌ Profile `{rsi_handle}` not found on FleetYards.net. / "
+                        f"No se encontró el perfil `{rsi_handle}` en FleetYards.net.\n"
+                        f"Register at [fleetyards.net]({fleetyards_url}) with your RSI handle to use this command. / "
+                        f"Regístrate en [fleetyards.net]({fleetyards_url}) con tu handle de RSI para usar este comando.",
+                        ephemeral=True
+                    )
+                    return
+                elif response.status != 200:
+                    await interaction.followup.send(
+                        "⚠️ Could not connect to FleetYards.net. Please try again later. / "
+                        "Error al conectar con FleetYards.net. Inténtalo más tarde.",
+                        ephemeral=True
+                    )
+                    return
+                html = await response.text()
+        except Exception as e:
+            await interaction.followup.send(
+                f"⚠️ Connection error with FleetYards: {str(e)} / Error de conexión con FleetYards: {str(e)}",
+                ephemeral=True
+            )
+            return
+
+    soup = BeautifulSoup(html, 'html.parser')
+
+    # ------------------------------------------------------------------
+    # SHIP LIST EXTRACTION / EXTRACCCIÓN DE LA LISTA DE NAVES
+    # EN: FleetYards renders hangar items server-side. We look for ship name
+    #     elements using the known CSS class patterns from their HTML structure.
+    # ES: FleetYards renderiza los items del hangar en el servidor. Buscamos los
+    #     elementos de nombre de nave usando los patrones de clase CSS conocidos.
+    # ------------------------------------------------------------------
+    ships = []
+
+    # EN: Primary selector: data-name attribute on hangar item containers
+    # ES: Selector primario: atributo data-name en los contenedores de items del hangar
+    for item in soup.find_all(attrs={"data-name": True}):
+        name = item.get("data-name", "").strip()
+        if name:
+            manufacturer = item.get("data-manufacturer", "").strip()
+            ships.append((name, manufacturer))
+
+    # EN: Fallback selector: look for elements with class containing 'name' inside hangar items
+    # ES: Selector alternativo: buscar elementos con clase que contenga 'name' dentro de items del hangar
+    if not ships:
+        for item in soup.select(".hangar-item .name, .ship-item .name, [class*='ship'] .name"):
+            name = item.get_text(strip=True)
+            if name:
+                ships.append((name, ""))
+
+    # EN: If no ships found, the hangar is likely private or the user has no ships registered
+    # ES: Si no se encuentran naves, el hangar probablemente es privado o el usuario no tiene naves registradas
+    if not ships:
+        await interaction.followup.send(
+            f"🔒 The hangar of `{rsi_handle}` on FleetYards is empty or set to private. / "
+            f"El hangar de `{rsi_handle}` en FleetYards está vacío o configurado como privado.\n\n"
+            f"To enable it, go to [fleetyards.net]({fleetyards_url}) → Profile → **Settings** → enable **Public Hangar**. / "
+            f"Para activarlo, entra en [fleetyards.net]({fleetyards_url}) → Perfil → **Settings** → activa **Public Hangar**.",
+            ephemeral=True
+        )
+        return
+
+    # EN: Build the embed with the ship list, capping at 25 ships to stay within Discord embed limits
+    # ES: Construir el embed con la lista de naves, limitando a 25 para no superar los límites de Discord
+    MAX_DISPLAY = 25
+    shown_ships = ships[:MAX_DISPLAY]
+    overflow = len(ships) - MAX_DISPLAY
+
+    # EN: Format each ship as a line: "• Ship Name — Manufacturer" or "• Ship Name" if no manufacturer
+    # ES: Formatear cada nave como una línea: "• Nombre — Fabricante" o "• Nombre" si no hay fabricante
+    ship_lines = [
+        f"• **{name}**" + (f" — *{mfr}*" if mfr else "")
+        for name, mfr in shown_ships
+    ]
+
+    if overflow > 0:
+        ship_lines.append(f"*... and {overflow} more ship(s). See full hangar below. / y {overflow} nave(s) más. Ver hangar completo abajo.*")
+
+    embed = discord.Embed(
+        title=f"🚀 {rsi_handle}'s Hangar / Hangar de {rsi_handle}",
+        description="\n".join(ship_lines),
+        color=0x00aaff,
+        url=fleetyards_url
+    )
+    embed.set_footer(text=f"Data via FleetYards.net · Datos via FleetYards.net · {len(ships)} ship(s) total")
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 # EN: Start the bot — make sure DISCORD_TOKEN is set in your .env file
