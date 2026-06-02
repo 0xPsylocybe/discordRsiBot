@@ -327,7 +327,7 @@ class VerificationView(discord.ui.View):
                     )
                     # EN: Persist the verified user's RSI handle in the database for future commands
                     # ES: Guardar el handle RSI del usuario verificado en la base de datos para futuros comandos
-                    await save_verified_user(user_id, rsi_handle)
+                    await save_verified_user(user_id, rsi_name)
                     # EN: Remove cache entry after successful verification to free memory
                     # ES: Eliminar la entrada del caché tras la verificación exitosa para liberar memoria
                     del verification_cache[user_id]
