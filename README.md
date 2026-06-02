@@ -27,8 +27,8 @@ A Discord bot that verifies [Roberts Space Industries (RSI)](https://robertsspac
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/discordRsiVerificationBot.git
-cd discordRsiVerificationBot
+git clone https://github.com/your-username/discordRsiBot.git
+cd discordRsiBot
 ```
 
 ### 2. Install dependencies
